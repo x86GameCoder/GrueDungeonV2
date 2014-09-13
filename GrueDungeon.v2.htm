@@ -1,0 +1,2029 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+    <title>Dungeon Grue! (c)2012 Steven Augustine Badal</title>
+    <link href="GrueDungeon2.css" rel="stylesheet" type="text/css" />
+</head> 
+
+<body  onload="javascript:initGame();" onkeyup="javascript:oIO.checkKeyEvent(event);" > 
+    <div id="background">
+        <img id="grueeyes" src="images/grueeyes.bmp" />
+        <img id="gameTitle" src="images/title.png" />
+        <img id="sword" src="images/ElvishSword.png" />
+
+        <div id="storyPanel">
+            <div id="header">
+                <div id="roomTitleDiv"></div><div id="scoreDiv">0/100</div>
+            </div>
+            <div id="descriptionDiv"></div>
+            <div id="commandDiv"><img id="skeletonPointer" src="images/skeletonpointer.png" width="200"><input id="command" maxlength="100"  /></div>
+        </div>
+        <img id="lamp" src="images/lamp.bmp" />
+
+    </div>
+    <audio controls="controls" hidden="true" id="audioHeartbeat" >
+        <source src="sounds/heartbeat2.wav" type="audio/wav" />
+        Your browser does not support this audio
+    </audio> 
+    <audio controls="controls" hidden="true" id="windyGraveyard" loop="Loop" >
+        <source src="sounds/windygraveyard.wav" type="audio/wav" />
+        Your browser does not support this audio
+    </audio> 
+
+    <audio controls="controls" hidden="true" id="roomAmbience" loop="off" >
+        <source src="" type="audio/wav" />
+        Your browser does not support this audio
+    </audio> 
+
+</body>
+<script type="text/javascript">
+
+    var oParser = null;
+    var gameObjects = [];
+    var oIO = null;
+    var oDictionary = null;
+    var maxCharactersPerLine = 80;
+    var maxDescriptionOffset = 680;
+    var maxRows = 20;
+    var oCommand = document.getElementById("command");
+    var oDescription = document.getElementById("descriptionDiv");
+    var oScore = document.getElementById("scoreDiv");
+    var oTitle = document.getElementById("roomTitleDiv");
+    var waitKeyPress = false;
+    var enterKeyHit = false;
+    var watchKeyboard;
+    var cussOmeterLimit = 5;
+    var roomAmbienceInterval;
+    var eWordTypes = {
+        None: -1,
+        Preposition: 0,
+        Conjunction: 1,
+        Verb: 2,
+        Noun: 3,
+        Adverb: 4,
+        Crudity: 5
+    };
+
+
+    var entry = function (type, word, synonyms, adjectives) {
+        this.type = type;
+        this.word = word;
+        this.synonyms = synonyms.slice();
+        this.adjectives = adjectives.slice();
+        this.isValid = true;
+    };
+
+    var eCommandPatterns = {
+        NONE:         "",
+        V:            "V",
+        V_DO:         "V_DO",
+        V_DOs:        "V_DOs",
+        V_DO_P:       "V_DO_P",
+        V_DOs_P:      "V_DOs_P",
+        V_DO_P_IO:    "V_DO_P_IO",
+        V_DOs_P_IO:   "V_DOs_P_IO",
+        V_DO_P_IOs:   "V_DO_P_IOs",
+        V_DOs_P_IOs:  "V_DOs_P_IOs",
+        V_P_IO:       "V_P_IO"
+    };
+    var commandObject = function () {
+        this.verb = "";
+        this.directObjects = [];
+        this.indirectObjects = [];
+        this.prepositions = [];
+        this.pattern = eCommandPatterns.NONE;
+        this.needDirectObject = false;
+        this.needIndirectObject = false;
+        this.isValid = false;
+        this.errMsg = "";
+        this.invalidWords = [];
+    };
+
+
+//*****************************************
+//***         PARSER "Module"           ***                                            
+//*****************************************
+    var parser = function () {
+       
+        var words = [];
+        this.lastCommand = null;
+        this.needIndirectObject = false;
+        this.needDirectObject = false;
+
+        this.validateCommands = function (commandObjects) {
+            var verbValid;
+            var dirObjValid;
+            var indObjValid;
+            var prepValid;
+            var oCmd;
+            var dirObj;
+            var indObj;
+            var prep;
+
+            for (var i in commandObjects){
+
+                verbValid = true;
+                dirObjValid = true;
+                indObjValid = true;
+                prepValid = true;
+
+                oCmd = commandObjects[i];
+                verbValid = (oDictionary.getEntryByWord(oCmd.verb)!=null);
+
+                for (var j in oCmd.directObjects) {
+                    dirObj = oCmd.directObjects[j];
+                    if (oDictionary.getEntryByWord(dirObj)==null) dirObjValid = false;
+                }
+                for (var j in oCmd.indirectObjects) {
+                    indObj = oCmd.indirectObjects[j];
+                    if (oDictionary.getEntryByWord(indObj)==null) indObjValid = false;
+                }
+
+                for (var j in oCmd.prepositions) {
+                    prep = oCmd.prepositions[j];
+                    if (oDictionary.getEntryByWord(prep)==null) prepValid = false;
+                }
+
+
+                oCmd.isValid = (verbValid && dirObjValid && prepValid && indObjValid);
+            }
+        };
+
+        this.getDirectObjectQualifier = function (commandObject) {
+            this.lastCommand = commandObject;
+            this.lastCommand.needDirectObject = true;
+            oIO.echo("What would you like to " + commandObject.verb + "?");
+            return true;
+        };
+
+
+        this.getIndirectObjectQualifier = function (commandObject) {
+            this.lastCommand = commandObject;
+            this.lastCommand.needIndirectObject = true;
+            oIO.echo("How would you like to do this?");
+            return true;
+        };
+
+        this.getQualifiedCommandObject = function () {
+            var onlyNouns = true; ;
+            var cmds = stripConjunctions(oCommand.value).split(" ");
+            var entry;
+
+
+            if (this.needDirectObject) { oParser.lastCommand.directObjects = []; }
+            else
+            { oParser.lastCommand.IndirectObjects = []; }
+
+            for (var i in cmds) {
+                entry = oDictionary.getEntryByWord(cmds[i]);
+
+                if (entry && entry.type == eWordTypes.Noun) {
+                    if (this.needDirectObject)
+                    { oParser.lastCommand.directObjects.push(entry.word); }
+                    else
+                    { oParser.lastCommand.indirectObjects.push(entry.word); }
+                }
+                else { onlyNouns = false; }
+            }
+            oParser.lastCommand.pattern = getPattern(oParser.lastCommand);
+
+            return onlyNouns;
+        };
+
+        var stripConjunctions = function (text) {
+            var conjunctions = [
+                                 ","
+                                ,";"
+                                ,"and"
+                                ,"also"
+                                ,"but"
+                            ]
+            return (stripFromText(conjunctions, text));
+        };
+
+        var stripPronouns = function (text) {
+            var pronouns = [
+                                 "my"
+                                ,"him"
+                                ,"his"
+                                ,"hers"
+                                ,"her"
+                                ,"ours"
+                                ,"our"
+                                ,"their"
+                                ,"theirs"
+                                ,"i"
+                                ,"you"
+                            ]
+            return (stripFromText(pronouns, text));
+        }
+
+        var createCommandObject = function (commandLine) {
+
+            var oCmdObj = new commandObject();
+
+
+            //Verb will always be first
+            oCmdObj.verb = getVerb(commandLine); 
+
+            //Get the rest of the command structure
+            oCmdObj.directObjects =  getDirectObjects(commandLine);
+            oCmdObj.indirectObjects = getIndirectObjects(commandLine);
+            oCmdObj.prepositions = getPrepositions(commandLine);
+ 
+            //Now we can get the pattern
+            oCmdObj.pattern = getPattern(oCmdObj);
+
+            //In case we have nothing!  Could be curse words, or just plain babble.
+            if (!oCmdObj.verb && !oCmdObj.directObjects && !oCmdObj.indirectObjects && !oCmdObj.prepositions){ oCmdObj.invalidWords.push (commandLine.split(" "));}
+
+            return oCmdObj;
+
+        };
+
+        var getVerb = function (commandLine) {
+            var entry = oDictionary.getEntryByWord(commandLine[0]);
+            return (entry?entry.word:null);
+
+        };
+
+        var getPattern = function (commandObject) {
+            var pattern = "";
+            var Vs = "";
+            var DOs = "";
+            var Ps = "";
+            var IOs = "";
+            Vs = (commandObject.verb != "" ? "V" : "" );
+
+            if (commandObject.directObjects.length>0){
+                DOs = (commandObject.directObjects.length > 1 ? "_DOs" : "_DO" );
+            }
+
+            if (commandObject.prepositions.length>0){
+                Ps = (commandObject.prepositions.length > 1 ? "_Ps" :"_P" );
+            }
+            
+            if (commandObject.indirectObjects.length>0){
+                IOs = (commandObject.indirectObjects.length > 1 ? "_IOs" :"_IO" );
+            }
+            pattern += Vs + DOs + Ps + IOs;
+            return pattern;
+        };
+
+        var getPrepositions = function (commandLine) {
+            var prepositions = [];
+            var entry;
+            for (var i in commandLine) {
+                entry = oDictionary.getEntryByWord(commandLine[i]);
+                if (entry) {
+                    if (entry.type==eWordTypes.Preposition){
+                        prepositions.push(entry.word);
+                    }
+                }
+            }
+            return prepositions;        
+        };
+    
+        var getDirectObjects = function (commandLine) {
+            var directObjects = [];
+            var entry;
+            for (var i in commandLine) {
+                entry = oDictionary.getEntryByWord(commandLine[i]);
+                if (entry) {
+                    if (entry.type==eWordTypes.Preposition){
+                        return directObjects;
+                    }
+                    else{
+                        if (entry.type!=eWordTypes.Verb) directObjects.push(entry.word);
+                    } 
+                }
+            }
+            return directObjects;
+        };
+
+        var getIndirectObjects = function (commandLine) {
+            var indirectObjects = [];
+            var hasPreposition;
+            var entry;
+            for (var i in commandLine) {
+                entry = oDictionary.getEntryByWord(commandLine[i]);
+                if (entry) {
+                    if (entry.type==eWordTypes.Preposition){
+                        hasPreposition = true;
+                    }
+                    else if (hasPreposition && entry.type!=eWordTypes.Verb) {
+                        indirectObjects.push(entry.word);
+                    }
+                }
+            }
+            return indirectObjects;
+        };
+        this.getCommandObjects = function (commandLineText) {
+            var commandLine = [];
+            var tmp = "";
+            var _commandObjects = [];
+            var _verbGroups = [];
+
+            // kill conjunctions and pronouns.
+            tmp = stripPronouns(stripConjunctions(commandLineText));
+
+            // now get the verb groups
+            _verbGroups = markVerbGroups(tmp).split("~");
+
+            // iterate through the verb groups, and create a commandLine for each one 
+            // to be turned into a command object
+            for (var i in _verbGroups){
+                if (_verbGroups[i].length>0) {
+                    commandLine = _verbGroups[i].split(" ");
+                    _commandObjects.push (createCommandObject(commandLine));
+                }
+            }
+            return _commandObjects;
+        };
+
+        var markVerbGroups = function (commandLineText) {
+            var verbCount = 0;
+            var words = commandLineText.split(" ");
+            var entry;
+            for (var i in words) {
+                entry = oDictionary.getEntryByWord(words[i]);
+                if (entry) {
+                    if (oDictionary.getEntryByWord(words[i]).type==eWordTypes.Verb) {
+                        verbCount ++;
+                        words[i] = "~" + words[i];
+                    }
+                }
+            }
+            if (verbCount==0 && words.length>0) words[0] = "~" + words[0]; // this is for cases in which no recognizable verbs are found.
+            return (words.join(" "));
+        };
+
+
+        var stripFromText = function(symbolList, text) {
+            var newText = [];
+            var arr = text.split(" ");
+            for (var i in arr)
+            {   
+                if (symbolList.indexOf(arr[i])==-1) newText.push(arr[i]);
+            }
+            return newText.join(" ");
+        };
+
+
+    };
+
+
+    
+// ************************************
+// ***        I/O "Module"          ***
+// ************************************
+    var IO = function () {
+
+        this.writeResponses = function (commands) {
+
+            for (var i in commands) {
+                this.echo(commands[i].response);
+            }
+
+        };
+
+        var isHTML = function (text) {
+            var bHtml = (text.match(/<(.|\n)*?>/g) != null);  //Another web rip.  Thanks WWW!
+            return bHtml;
+        };
+
+        var getTextArray = function (text) {
+            //first, make an array out of the text
+            //assuming the spaces as delimiters
+            var _text = text.split(" ");
+            var _copy = [];
+            var charCount = 0;
+            var doneProcessing = false;
+            var i = 0;
+            var word = "";
+            var lines = [];
+            var line = "";
+
+            //next, strip out empty arrays
+            for (i in _text) {
+                if (_text[i].length > 0) {
+                    _copy.push(_text[i]);
+                }
+            }
+            //now, find the nearest [maxCharactersPerLine] characters
+            //HTML formatting does not count unless it's
+            //a space (&nbsp;)
+            i = 0;
+            do {
+                doneProcessing = (i == _copy.length);
+                if (!doneProcessing) {
+                    word = _copy[i];
+                    if (!isHTML(word)) {
+                        word += " ";
+                        charCount += word.length;
+                        line += word;
+                    }
+                    if (charCount >= maxCharactersPerLine) {
+                        lines.push(line);
+                        line = "";
+                        charCount = 0;
+                    }
+                }
+                i++;
+
+            } while (!doneProcessing);
+
+            if (line.length > 0) lines.push(line); // takes care of any leftover text.
+
+            //DONE!
+            return lines;
+        };
+
+        this.echo = function (text) {
+            this.writeText( text.toString(), true);
+        };
+
+        var adjustScroll = function(){
+            oDescription.scrollTop = oDescription.scrollHeight;
+        };
+
+        this.writeText = function (text, append) {
+            var lines = getTextArray(text);
+            var line = "";
+
+            oDescription.innerHTML = (append ? oDescription.innerHTML + "<br />" : "");
+            for (line in lines) {
+                oDescription.innerHTML += lines[line] ;
+            }
+            adjustScroll();
+        };
+
+        this.resetCommandLine = function () {
+            oCommand.value = "";
+            oCommand.focus();
+        };
+
+        this.echoUserCommand = function () {
+            this.writeText("<br />", true);
+            this.writeText("\"" + oCommand.value + "\"", true);
+        };
+
+        this.refreshScreen = function (playerObj, roomObj) {
+            oTitle.innerHTML = roomObj.title.toUpperCase();
+            oScore.innerHTML = playerObj.score + "/" + maxScore;
+            try {
+                getDescriptionOf();
+                oIO.resetCommandLine();
+            } catch (e) { alert(e); }
+            oCommand.focus();
+        };
+
+        this.checkKeyEvent = function (evt) {
+            if (evt.keyCode == 13) {
+                enterKeyHit = true;
+                return true;
+            }
+            return false;
+        };
+    };
+
+
+// ************************************
+// *** EXCEPTION HANDLING "Module"  ***
+// ************************************
+    var eErrorTypes = {
+        None: 0,
+        Validation: 1,
+        UnhandledSystem: 2,
+        UnhandledInput: 3
+    };
+
+    var exceptionLog = [];
+    var exception = function (errorType, message, source) {
+        this.errorType = errorType;
+        this.message = message;
+        this.source = source;
+        this.dateTime = date();
+    };
+
+    var addException = function (exception) {
+        if (exception.hasOwnProperty ("errorType"))
+            exceptionLog.push(exception);
+    };
+
+    var clearExceptionLog = function () {
+        exceptionLog = [];
+    };
+
+    var showLastException = function () {
+        if (exceptionLog.length > 0) {
+            var oErr = exceptionLog[exceptionLog.length - 1];
+            var errType = getEnumKey(eErrorTypes, oErr.errorType);
+            var msg = oErr.message;
+            var src = oErr.source;
+            var dateTime = oErr.dateTime;
+            var out = "Exception\nType:" + eErrorTypes + "\nMessage:\"" + oErr.message + "\nSource:" + oErr.source + "\nDate/Time:" + oErr.dateTime;
+            oIO.echo(out);
+        }
+    };
+    
+    var oResult = {
+        retObj: null,
+        Message: ""
+    }
+
+// ***************************
+// *** AUXILIARY "Module"  ***            
+// ***************************
+
+    var killEmptyArraySlots = function (arr) {
+        var newArr = [];
+        for (var a in arr) {
+            if (arr[a].length > 0) newArr.push(trim(arr[a]));
+        }
+        return newArr;
+    }
+
+    var trim = function (stringToTrim) {
+        return stringToTrim.replace(/^\s+|\s+$/g, ""); //grabbed this from the web, forget where.
+    }
+
+    var getEnumKey = function (enumStruct, value) {
+        for (var i in enumStruct) {
+            if (enumStruct[i] == value) { return i; }
+        }
+    };
+
+    
+// ***************************
+// *** DICTIONARY "Module" ***            
+// ***************************
+
+    var dictionary = function () {
+
+        var entries = [];
+
+        this.getEntries = function(type) {
+            var _copy = [];
+            if (type) {
+                for (var i in entries) {
+                    if (entries[i].type==type){
+                        _copy.push(entries[i].word);
+                    }
+                }
+                return _copy.slice();
+            } else {
+                return entries.slice();
+            }
+        };
+
+        this.getEntryByWord = function (word) {
+            var _word = "";
+            var _entry;
+            var _syn;
+            for (var i in entries) {
+                _entry = entries[i];
+                _word = _entry.word;
+
+                if (_word == word) { 
+                    return _entry; 
+                } 
+                else {
+                    _syn = _entry.synonyms;
+                    for (var j in _syn) {
+                        if (_syn[j] == word) {return _entry;}
+                    } 
+                }
+            }
+            return null;
+        };
+
+        var xlateCrudity = function (word) {
+            var newWord = "";
+            for (i in word) {
+                newWord += String.fromCharCode(word[i].charCodeAt(0)-1);
+            }
+            return newWord;
+        };
+
+        this.addEntries = function (type, args) {
+            var word;
+
+            var rawEntry = "";
+            var synonyms = [];
+            var adjectives = [];
+            var tmp = [];
+
+            for (var i in args) {
+                rawEntry = args[i];
+
+                //first entry is always the key word
+                word = args[i].toString().split(":")[0].split(",")[0];
+                if (type==eWordTypes.Crudity) word = xlateCrudity(word);
+                //check for synonyms
+                try {
+                    tmp = args[i].toString().split(":")[0].split(",");
+                    if (tmp.length > 1)
+                        try {
+                            synonyms = killEmptyArraySlots(tmp.slice(1));
+                        } catch (e) { alert(e); }
+                } catch (e) {
+                    //do nothing
+                }
+
+                //check for adjectives
+                try {
+                    tmp = args[i].toString().split(":")[1].split("#");
+                    if (tmp.length > 0){
+                        adjectives = killEmptyArraySlots(tmp.slice());
+
+                    }
+                } catch (e) {
+                    //do nothing
+                }
+
+                //Finally, plug entry into dictionary
+                try {
+                    var _entry = new entry(type, word, synonyms, adjectives);
+                    entries.push(_entry);
+                } catch (e) { alert(e); }
+                synonyms = [];
+                adjectives = [];
+            }
+        }
+    };
+    
+// ****************************
+// ***    GAME "Module"     ***
+// ****************************
+
+
+    var eDirections = {
+        None: -1,
+        North: 0,
+        NorthWest: 1,
+        NorthEast: 2,
+        South: 3,
+        SouthWest: 4,
+        SouthEast: 5,
+        East: 6,
+        West: 7
+    };
+
+    var eThingTypes = {
+        Undefined: -1,
+        Player: 0,
+        Actor: 1,
+        Object: 2,
+        Door: 3,
+        Room: 4
+    };
+
+    var ePlayerStates = {
+        Dead: 0,
+        Alive: 1,
+        Weak: 2,
+        Injured: 3,
+        Immobile: 4,
+        Blind: 5,
+        Deaf: 6,
+        Hungry: 7,
+        Scared: 8
+    };
+
+    var eActorStates = {
+        Dead: 0,
+        Weak: 1,
+        Injured: 2,
+        Immobile: 3,
+        Blind: 4,
+        Deaf: 5,
+        Hungry: 6,
+        Scared: 7,
+        Hostile: 8,
+        Wandering: 9
+    };
+
+    var eObjectStates = {
+        None: 0,
+        Transferrable: 1,
+        Open: 2,
+        Closed: 3,
+        Locked: 4,
+        Unlocked: 5,
+        On: 6,
+        Off: 7,
+        Lit: 8,
+        Unlit: 9,
+        Stuck: 10
+    };
+
+    var eItemLocationContexts = {
+        PlayerInventory: 0,
+        ActorInventory: 1,
+        RoomLocation: 2,
+        Everywhere: 3
+    };
+
+    var eItemDiscoveryStatuses = {
+        ReadilyAvailable: 0,
+        PresentButContained: 1,
+        PresentWithMultiples: 2,
+        ExistsButNotPresent: 3,
+        NowhereToBeFound: 4
+    };
+
+    var ObjectDaemon = function (noun, locationContext) {
+        var _discoveryStatus = null;
+        this.items = [];
+        this.locationContext = locationContext;
+        this.noun = noun;
+        this.discoveryCount=0;
+        this.subContainer = false;
+
+
+        var findObjects = function (noun, baseObj, itemsList, discoveryCount) {
+            var retObj = null;
+            for (var i in baseObj.items) {
+                if (baseObj.items[i].basicNoun==noun) {itemsList.push(baseObj.items[i]); discoveryCount++;}
+                if (baseObj.items[i].items.length>0) {retObj = findObjects (noun, baseObj.items[i].items); if (retObj) subContainer=true;}
+                if (retObj) itemsList.push(retObj);
+            }
+        };
+
+
+        this.grabObjectByAdjective = function (adjArray, _items) {
+            var items = (_items?_items:this.items);
+            for (var i in _items)
+            {
+                var obj = _items[i];
+                for (j in obj.adjectives) {
+                    var adj = obj.adjectives[j];
+                    if (adjArray.indexOf(adj)>-1) return obj;
+                    if (obj.items.length > 0) return this.grabObjectByAdjective(adjArray, items)
+                }
+            }
+            return null;
+        };
+
+        this.grabObjectByNoun = function (noun, _items) {
+            var items = (_items?_items:this.items);
+            for (var i in _items)
+            {
+                var obj = _items[i];
+                if (obj.basicNoun == noun) return obj;
+                if (obj.items.length>0) return this.grabObjectByNoun (noun, items);
+            }
+            return null;
+        };
+
+        findObjects (noun, locationContext, this.items, this.discoveryCount);
+    };
+
+
+    ObjectDaemon.prototype = {
+                                get discoveryStatus () {return _discoveryStatus;},
+                                set discoveryStatus (val) {_discoveryStatus = val;}
+                            };
+
+    var eCommandExceptions = {
+        DuplicateObjectFound: 0,
+        NoSuchObjectFound: 1,
+        ObjectNotHere: 3,
+        CannotDoThatWithObject: 4
+    };
+
+
+    var Thing = function (basicNoun, description, thingType) {
+        this.adjectives     = [];
+        this.items          = [];
+        this.states         = [];
+
+        this.basicNoun      = (basicNoun?basicNoun:"");
+        this.canBeTakenByPlayer = false;
+        this.description    = (description ? description : "");
+        this.direction      = eDirections.None;
+        this.gameID         = "";   //To uniquely identify objects no matter how many of the same kind there are
+        this.hitPoints      = 0;
+        this.isTreasure     = false;
+        this.isUnique       = true;
+        this.location       = null;
+        this.points         = 0;
+        this.type           = eThingTypes.Undefined;
+        this.removeItem     = function (i)  {this.items = removeGeneric (i, this.items);};            
+        this.removeAdjective= function (i)  {this.adjectives = removeGeneric (i, this.adjectives);};            
+        this.changeState    = function (from,to){this.states = changeGeneric (from,to,this.states);};
+        this.removeState    = function (i)  {this.states = removeGeneric (i, this.states);};            
+        this.containmentPath = [];
+
+        var changeGeneric   = function (from, to, arr) {
+                                                            try {
+                                                                arr[arr.indexOf(from)] = to;
+                                                                } 
+                                                            catch(e) {
+                                                                arr.push(to);
+                                                            } 
+                                                            return arr;
+                                                    };
+
+        var removeGeneric   = function (obj, arr)   {      
+                                                            var _copy = [];
+                                                            for (var x in arr) {
+                                                                if (arr[x]!=obj) _copy.push(arr[x]);
+                                                            }
+                                                            arr = arr.splice();
+                                                            arr.push(_copy.slice());
+
+                                                            return _copy;   
+                                                    };
+
+        };
+
+    
+    var eAmbienceFrequency = {
+        None: 0,
+        Once: 1,
+        Random: 2,
+        Loop: 3
+    };
+
+    var eAmbienceStates = {
+        Waiting:    0,
+        Playing:    1,
+        Done:       2 
+    }
+
+
+
+
+
+    var ambience = function (soundFile, frequency) {
+        this.soundFile = soundFile;
+        this.frequency = frequency;
+        this.soundState  = eAmbienceStates.Waiting;
+        this.audioObject = document.getElementById("roomAmbience");
+        };
+
+    ambience.prototype = new ambience;
+
+    // ambience.prototype = {  //Need to run a function to change audioObject play to pause when state changes.
+    //                         set frequency () {this.frequency=}
+    // }
+
+    var Room = function () { Thing.call(this); };
+    Room.prototype = new Thing();
+    Room.prototype.constructor=Room;
+    Room.prototype.title = "";
+    Room.prototype.ambience = null;
+        
+    var Weapon = function () { Thing.call(this); };
+    Weapon.prototype = new Thing;
+    Weapon.prototype.constructor=Weapon;
+    Weapon.prototype.getDamage = function() {return Math.floor(Math.random()* this.maxDamage + 1);}
+    Weapon.prototype.usableBy = [];
+    Weapon.prototype.maxDamage = 0;
+
+    var Door = function () { Thing.call(this); };
+    Door.prototype = new Thing();
+    Door.prototype.constructor=Door;
+    Door.prototype.destination = "";
+    Door.prototype.key = "";
+    Door.prototype.pairedDoor = "";
+
+    var Player = function () { Thing.call(this); };
+    Player.prototype = new Thing;
+    Player.prototype.constructor=Player;
+    Player.prototype.score = 0;
+    Player.prototype.cussOmeter = 0;
+
+    var Actor = function() { Thing.call(this); };
+    Actor.prototype = new Thing();
+    Actor.prototype.constructor=Actor;
+
+    var maxScore = 100;
+    var oMap = [];
+    var oPlayer;
+
+
+    var getObjectCountByNoun = function (oLocation, noun) {
+        var nounCount = 0;
+        var items = oLocation.items;
+        for (var i in items) {
+            if (oLocation.items[i].basicNoun == noun) nounCount ++;
+        }
+        return nounCount;
+    };
+
+    var getInventoryObjectCountByNoun = function (oBase, noun, count) {
+        var nounCount = (count?count:0);
+        var items = oBase.items;
+        for (var i in items) {
+            if (items[i].basicNoun == noun) nounCount ++;
+            if (items[i].items.length>0) nounCount += getInventoryObjectCountByNoun(items[i],noun,nounCount);
+        }
+        return nounCount;
+    };
+
+
+  
+   var isObjectAnywhereInGame = function(noun){
+        var obj;
+        for (var i in oMap) {
+            for (var j in oMap[i].items)
+            {
+                obj = oMap[i].items[j];
+                if (obj.basicNoun == noun) return true;
+            }
+        }
+        return false;
+    };
+
+
+    var getInventoryObjectByNoun = function (baseObj, noun){
+        var nounCount = getInventoryObjectCountByNoun (baseObj, noun);
+        var retValue = 0;
+        if (nounCount == 1) {
+            for (var i in baseObj.items) {
+                if (oLocation.items[i].basicNoun == noun) {return oLocation.items[i];}
+            }
+        }
+        else {
+            if (nounCount==0)
+            {
+                if (isObjectAnywhereInGame(noun)) {
+                    return eCommandExceptions.ObjectNotHere;
+                } else {
+                    return eCommandExceptions.NoSuchObjectFound;
+                }
+            }
+            else
+            {
+                return eCommandExceptions.DuplicateObjectFound;
+            }
+        }
+    };
+
+
+    var getRoomObjectByNoun = function (oLocation, noun){
+        var nounCount = getObjectCountByNoun (oLocation, noun);
+        var retValue = 0;
+        if (nounCount == 1) {
+            for (var i in oLocation.items) {
+                if (oLocation.items[i].basicNoun == noun) {return oLocation.items[i];}
+            }
+        }
+        else {
+            if (nounCount==0)
+            {
+                if (isObjectAnywhereInGame(noun)) {
+                    return eCommandExceptions.ObjectNotHere;
+                } else {
+                    return eCommandExceptions.NoSuchObjectFound;
+                }
+            }
+            else
+            {
+                return eCommandExceptions.DuplicateObjectFound;
+            }
+        }
+    };
+
+
+    
+    var createDictionary = function () {
+
+        // WORD DEFINITIONS //
+        var nouns = [   
+             "all,everything","axe,ax:bloody","chest,treasure","clock,time piece","diamond,jewel","door,exit","face","gold","hand","key:gold#silver",
+             "lake","lamp,lantern,light:brass#old","letter","map","matches","mushroom,shroom,fungus:little","river:rushing","rose:red#lovely#thorny",
+             "sack:leather","scarf,bandana:green","sword,blade:shiny","thief,bandit,pilferer,brigand:shady#nimble","troll,monster:ugly#scary","vial,poison"
+        ];
+
+        var prepositions = [
+             "beneath","beside","besides","by","in","into","on","onto","over","under","with"
+        ];
+
+        var verbs = [
+             "close,shut","eat,devour","give,transfer,hand","go,walk,run,traverse,travel","hide","inventory,i","jump,hop","kill,murder,destroy,assassinate",
+            "light,ignite","load,restore","look,l,examine","north,n","northeast,ne","northwest,nw","open","pull,yank","push,shove","put,place","quit,bye",
+            "save,store","say,speak,shout","smell,sniff","south,s","southeast,se","southwest,sw","strike,hit,assault,punch","switch,turn","take,grab,get,pick up,obtain,acquire",
+            "taste,lick","unlock","up,u,climb","wait,rest,pause,sleep","west,w","down,d,descend","drink,imbibe,swallow","drop,forsake,let go","east,e"
+        ];
+
+        var crudities = [
+            "bovt","bttipmf","cbtubse","cjudi","cppcjft","cppct","dmju","dmjupsjt","dpdl","dpoepn","dvn","dvou","ejbssifb","ejdl","gbhhpu","gvdl","hpopssifb"
+            ,"ifsqft","kbdl!pgg","kfsl!pgg","nbtuvscbuf","ojqqmft","qff","qfojt","qjtt","qppq","qvcft","qvcjd","qvtt`","sbqf","sfubse","tdsfx","tfnfo","tiju"
+            ,"ubjou","uftuft","uftujdmft","ujut","ujuujft","uxbu","vsjof","wbhjob","xbolfs"
+        ];
+
+        var conjunctions = [
+             ",",";","and","but","then","also"
+        ];
+
+        var adverbs = [
+             "brazenly"
+            ,"carefully"
+            ,"loudly"
+            ,"quickly"
+            ,"quietly"
+            ,"slowly"
+            ,"timidly"
+        ];
+
+        //Now add the words to the dictionary
+        oDictionary.addEntries(eWordTypes.Noun, nouns);
+        oDictionary.addEntries(eWordTypes.Adverb, adverbs);
+        oDictionary.addEntries(eWordTypes.Conjunction, conjunctions);
+        oDictionary.addEntries(eWordTypes.Preposition, prepositions);
+        oDictionary.addEntries(eWordTypes.Crudity, crudities);
+        oDictionary.addEntries(eWordTypes.Verb, verbs);
+
+    };
+    
+    var createMap = function () {
+
+        try {
+
+            // **** CAVERN  *** //
+            var _room1 = new Room();
+            _room1.basicNoun = "cavern";
+            _room1.title = "CAVERN";
+            _room1.type = eThingTypes.Room;
+            _room1.gameID = "cavern";
+            _room1.description = "You find yourself in a large, dark and dank cavern.  You get the unsettling feeling you're not alone as you can hear faint growling noises off in the distance.";
+            _room1.adjectives.push ("dark","dank","dim");
+            _room1.ambience = new ambience("sounds/drippingwater.wav",eAmbienceFrequency.Once,true);
+
+
+            var _door1 = new Door();
+            _door1.basicNoun = "door";
+            _door1.description = "door";
+            _door1.type= eThingTypes.Door;
+            _door1.gameID = "cavern.brown.door";
+            _door1.direction = eDirections.South;
+            _door1.description = "To the south you see a large brown and beat up door with violent claw marks defiling its surface.";
+            _door1.destination = "trollcave"; //The gameID of where the door leads to...
+            _door1.adjectives.push ("large","brown");
+            _door1.key = "silver.key";
+            _door1.pairedDoor = "trollcave.brown.door";
+            _door1.states.push(eObjectStates.Closed);
+            _door1.states.push(eObjectStates.Locked);
+            _room1.items.push(_door1);
+            gameObjects.push(_door1);
+            gameObjects.push(_room1);
+            oMap.push(_room1);
+
+            // **** TROLL CAVE  *** //
+            var _room2 = new Room();
+            _room2.basicNoun = "cave";
+            _room2.title = "TROLL&nbsp;CAVE";
+            _room2.type = eThingTypes.Room;
+            _room2.gameID = "trollcave"
+            _room2.description = "You are in a smelly, dimly lit room made with crudely constructed wooden walls. <br/><br/> By the scratchings in the walls you suspect yourself to be in a troll room."
+            _room2.adjectives.push ("smelly","bloody");
+
+            var _door2 = new Door();
+            _door2.basicNoun = "door";
+            _door2.gameID = "trollcave.brown.door";
+            _door2.type = eThingTypes.Door;
+            _door2.direction = eDirections.North;
+            _door2.description = "To the north you can see a beat up door that doesn't look like it can take much more abuse."
+            _door2.destination = "cavern";
+            _door2.states.push(eObjectStates.Closed);
+            _door2.states.push(eObjectStates.Locked);
+            _door2.adjectives.push ("beat up");
+            _door2.pairedDoor = "cavern.brown.door";
+            _room2.items.push(_door2);
+            gameObjects.push(_door2);
+            gameObjects.push(_room2);
+            oMap.push(_room2);
+
+
+        } catch(e){alert(e);}
+    };
+
+
+
+    var placeObjectIntoRoom = function (object, room){
+        room.items.push(object);
+    };
+
+
+    var transferObject = function (gameID, from, to) {
+        var items = from.items;
+        var _copy = [];
+
+        for (var i in items){
+            if (items[i].gameID==gameID) {
+                to.items.push(items[i]);
+                for (var j in items) {
+                    if (items[j].gameID!=gameID) _copy.push(items[j]);
+                }
+                items = items.splice();
+                items = _copy.slice();
+                from.items = items;
+                return true;
+            } else {
+                if (items[i].items.length>0) transferObject(items[i],to,gameID);
+            }
+        }
+        return false;
+    };
+
+
+    var getObjectByGameID = function (gameID) {
+        for (var i in gameObjects) {
+            if (gameObjects[i].gameID == gameID) return gameObjects[i];
+        }
+        return null;
+    };
+
+    var getObjectByBasicNoun = function (basicNoun) {
+        for (var i in gameObjects) {
+            if (gameObjects[i].basicNoun == basicNoun) return gameObjects[i];
+        }
+        return null;
+    };
+
+    var createGameObjects = function () {
+        var _obj;
+        var _weapon;
+
+        _obj = new Thing("key","",eThingTypes.Object);
+        _obj.description = "On the floor is a silver key.";
+        _obj.gameID = "silver.key";
+        _obj.adjectives.push("silver");
+        _obj.states.push(eObjectStates.Transferrable);
+        placeObjectIntoRoom (_obj, getObjectByGameID("cavern"));
+        gameObjects.push(_obj);
+
+
+        var sack = new Thing("sack","",eThingTypes.Object);
+        sack.description = "Also, you see a curious brown leather sack.";
+        sack.gameID = "brown.sack";
+        sack.adjectives.push("brown");
+        sack.states.push(eObjectStates.Transferrable);
+        sack.states.push(eObjectStates.Closed);
+        placeObjectIntoRoom (sack, getObjectByGameID("cavern"));
+        gameObjects.push(sack);
+
+        var goldKey = new Thing("key","",eThingTypes.Object);
+        goldKey.description = "A shiny golden key.";
+        goldKey.gameID = "gold.key";
+        goldKey.adjectives.push("gold","golden");
+        goldKey.states.push(eObjectStates.Transferrable);
+        sack.items.push(goldKey);
+        gameObjects.push(goldKey);
+
+
+
+
+        //Player
+        oPlayer = new Player("Player", "Player", eThingTypes.Player);
+        oPlayer.location = getObjectByBasicNoun("cavern");
+        oPlayer.score = 0;
+        oPlayer.states.push(ePlayerStates.Alive);
+        oDictionary.addEntries(eThingTypes.Player, ["player,self"]);
+        gameObjects.push(oPlayer);
+
+        //Thief
+        _obj = new Thing("thief", "thief", eThingTypes.Actor);
+        _obj.location = getObjectByBasicNoun("cavern");
+        _obj.states.push(eActorStates.Wandering);
+        _obj.adjectives.push("shady","nimble");
+        _weapon = new Weapon("knife","knife",eThingTypes.Object);
+        _weapon.usableBy.push(_obj);
+        _weapon.usableBy.push(oPlayer);
+        gameObjects.push(_weapon);
+
+        _obj.items.push(_weapon);
+        gameObjects.push(_obj);
+
+
+    };
+
+    //*****************************************
+    //***            MAIN LOOP              ***
+    //*****************************************
+
+    var submitPlayerCommandToParser = function () {
+
+        if (enterKeyHit) {
+            oIO.echoUserCommand();
+
+            enterKeyHit = false;
+            //1. Parse command(s) - Get valid command objects
+            var commands = oParser.getCommandObjects(oCommand.value);
+
+
+            //2. validate command(s) - check for pattern and word integrity
+            oParser.validateCommands(commands);
+
+
+            //3. Loop through commands, execute each one, and spit out results
+            var cmd;
+            var isVulgar;
+            for (var i in commands)
+            {
+                cmd = commands[i];
+                isVulgar = hasCrudities(cmd); //This is for fun mostly ... to encourage civil gameplay.
+
+                if (cmd.isValid && !isVulgar) {
+                    runCommand(cmd);
+                }else{
+                    if (isVulgar) {
+                        oIO.echo(getRandomRebuke());
+                    } else
+                    {
+                        oIO.echo("I'm sorry, I don't understand this statement.");
+                    }
+
+                }
+
+            }
+            oIO.resetCommandLine();
+            refreshStats();
+        }
+    };
+
+    var hasCrudities = function (cmdObj) {
+        var entry = null;
+        var crudityFound = false;
+        var crudityCount = 0;
+
+        try {
+
+            for (var i in cmdObj.invalidWords) {
+                entry = oDictionary.getEntryByWord(cmdObj.invalidWords[i]);
+                if (entry)
+                {
+                    if (entry.type==eWordTypes.Crudity) crudityFound = true;
+                }
+            }
+
+            for (var i in cmdObj.directObjects) {
+                entry = oDictionary.getEntryByWord(cmdObj.directObjects[i]);
+                if (entry)
+                {
+                    if (entry.type==eWordTypes.Crudity) crudityFound = true;
+                }
+            }
+
+            for (var i in cmdObj.indirectObjects) {
+                entry = oDictionary.getEntryByWord(cmdObj.indirectObjects[i]);
+                if (entry)
+                {
+                    if (entry.type==eWordTypes.Crudity) crudityFound = true;
+                }
+            }
+
+            entry = oDictionary.getEntryByWord(cmdObj.verb);
+            if (entry) {
+                if (entry.type == eWordTypes.Crudity) crudityFound = true;
+            }
+
+        } catch(e) {alert (e);}
+
+        oPlayer.cussOmeter += (crudityFound?1:0);
+        return crudityFound;
+    };
+
+    var getRandomRebuke = function () {
+        var rebuke = [
+                         "You kiss your dog with that mouth?"
+                        ,"Classy.  Real classy."
+                        ,"Can we please keep this 'G' rated?"
+                        ,"Not called for."
+                        ,"I'm sorry, I thought a mature person was playing."
+                        ,"I hear they're making another Leisure Suit Larry. With your colorful writing 'talent', maybe they can use you?"
+                        ,"Really?  That's the best we can do?"
+                        ,"Here we go... kindly leave profanities out."
+                        ,"*** BLUSHING ***"
+                        ,"I can see you're a seasoned text-adventure gamer; surely no amateur uses *that* sort of language."
+                        ,"Every time you swear, a fairy loses her wings and dies an agonizing death."
+                        ,"You can hear the pitiful groanings of a little fairy dying off in the distance."
+                        ,"Now that's out of the way, can we get on with the game?"
+                    ];
+
+        if (oPlayer.cussOmeter>=cussOmeterLimit) {
+            oPlayer.score--;
+            oPlayer.cussOmeter = 0;
+            return "Okay, I'm taking one point and putting it in the cuss jar!";
+        } else {
+
+            var rebukeIndex = Math.floor(Math.random() * rebuke.length + 1);
+            return rebuke[rebukeIndex];
+        }
+
+    };
+
+    var refreshStats = function (){
+        oScore.innerHTML = oPlayer.score + "/" + maxScore;
+        oTitle.innerHTML = oPlayer.location.title;
+    };
+
+    var getSpecificDescription = function (command) {
+        var obj;
+        var objs = (command.directObjects.length>0?command.directObjects:command.indirectObjects);
+        var prepIn = (command.prepositions.indexOf("in")>-1 || command.prepositions.indexOf("into")>-1);
+        for (var i in objs) {
+             obj = getObjectByBasicNoun(objs[i]);
+             if (prepIn) {
+                 getDescriptionIn (obj);
+             }
+             else
+             {
+                 getDescriptionOf(obj);
+             }
+        }
+
+    };
+
+
+
+    var playerHas = function (basicNoun) {
+        for (i in oPlayer.items) {
+            if (oPlayer.items[i].basicNoun == basicNoun) return true;   
+        }
+        return null;
+    };
+
+
+    var keyFitsObject = function (keyObject, LockedObject){
+
+        for (var i in keyObject)
+        {
+            if (keyObject.basicNoun == lockedObject.keyID) {
+                for (var j in lockedObject.adjectives) {}
+
+            }
+
+        }
+        return false;
+    };
+  
+    var Open = function (command) {
+        var noun =  command.directObjects[0];
+        var objectToOpen = getRoomObjectByNoun (oPlayer.location, noun);
+        if (typeof(objectToOpen)=="number") {
+            var exception = objectToOpen;
+            switch(exception) {
+                case eCommandExceptions.DuplicateObjectFound:
+                    oIO.echo("Open which " + noun + "?");
+                    break;
+
+                case eCommandExceptions.NoSuchObjectFound:
+                    oIO.echo("No such thing exists (in this world!)");
+                    break;
+
+                case eCommandExceptions.ObjectNotHere:
+                    oIO.echo("Can't seem to find a " + noun + " here.");
+                    break;
+
+                default:
+                    break;
+            }
+
+        } else  {
+            if (isObjectLocked(objectToOpen)) {
+                oIO.echo("Can't open it! It's locked! Perhaps if you had a key...?");
+                return false;
+            } else if (isObjectOpen(objectToOpen)) {
+                oIO.echo("Um, it's already open, silly!");
+                return false;
+            } else {
+                objectToOpen.changeState (eObjectStates.Closed, eObjectStates.Open);
+                if (objectToOpen.type==eThingTypes.Door) 
+                        setCorrespondingDoorState (getObjectByGameID(objectToOpen.pairedDoor),eObjectStates.Closed, eObjectStates.Open);
+                oIO.echo("You open the " + noun + ".");
+                return true;
+            }
+
+        }
+    };
+
+
+    var Close = function (command) {
+        var noun =  command.directObjects[0];
+        var obj = getRoomObjectByNoun (oPlayer.location, noun);
+        if (typeof(obj)=="number") {
+            var exception = obj;
+            switch(exception) {
+                case eCommandExceptions.DuplicateObjectFound:
+                    oIO.echo("Close which " + noun + "?");
+                    break;
+
+                case eCommandExceptions.NoSuchObjectFound:
+                    oIO.echo("No such thing exists (in this world!)");
+                    break;
+
+                case eCommandExceptions.ObjectNotHere:
+                    oIO.echo("Can't seem to find a " + noun + " here.");
+                    break;
+
+                default:
+                    break;
+            }
+
+        } else  {
+            if (obj.states.indexOf(eObjectStates.Stuck)>-1) {
+                oIO.echo("Can't close it! It's stuck!");
+                return false;
+            } else if (obj.states.indexOf(eObjectStates.Closed)>-1) {
+                oIO.echo("But it's already closed!");
+                return false;
+            } else {
+                obj.changeState (eObjectStates.Open, eObjectStates.Closed);
+                if (obj.type==eThingTypes.Door) 
+                        setCorrespondingDoorState (getObjectByGameID(obj.pairedDoor),eObjectStates.Open, eObjectStates.Closed);
+                oIO.echo("You close the " + noun + ".");
+                return true;
+            }
+
+        }
+    };
+
+
+    var setCorrespondingDoorState = function (obj, from, to) {
+        if (to == eObjectStates.Unlocked)
+        {
+            obj.removeState(from);
+        }
+        else
+        {
+            obj.changeState(from, to);
+        }
+    };
+
+    var isObjectOpen = function (obj) {
+        return (obj.states.indexOf(eObjectStates.Open)>-1);
+    };
+
+    var isObjectLocked = function (obj) {
+        return  (obj.states.indexOf(eObjectStates.Locked)>-1);
+    };
+
+
+    var Unlock = function (cmd){
+        var noun =  cmd.directObjects[0];
+        var objectToUnlock = getRoomObjectByNoun (oPlayer.location, noun);
+        if (typeof(objectToTake)=="number") {
+            var exception = objectToTake;
+            switch(exception) {
+                case eCommandExceptions.DuplicateObjectFound:
+                    oIO.echo("Unlock which " + noun + "?");
+                    break;
+
+                case eCommandExceptions.NoSuchObjectFound:
+                    oIO.echo("Nothing to unlock!");
+
+                case eCommandExceptions.ObjectNotHere:
+                    oIO.echo("Can't seem to find a " + noun + " here to unlock.");
+                    break;
+
+                default:
+                    break;
+            }
+        } else  {
+            var items = oPlayer.items;
+            var requiredKey = objectToUnlock.key;
+            var obj = null;
+            for (var i in items) {
+                if (items[i].gameID == requiredKey) obj = items[i];
+            }
+            if (obj) {
+                //objectToUnlock.changeState (eObjectStates.Locked, eObjectStates.Unlocked);
+                objectToUnlock.removeState (eObjectStates.Locked);
+                if (objectToUnlock.type==eThingTypes.Door) 
+                        setCorrespondingDoorState (getObjectByGameID(objectToUnlock.pairedDoor),eObjectStates.Locked, eObjectStates.Unlocked);
+                oIO.echo("*CLICK!* I think you unlocked it!");            
+            } else{
+                oIO.echo("Sorry, you don't have the right key for this!");
+                return false;
+            }
+        }
+    };
+
+
+    var checkObjectState = function (obj, objectState) {
+        //Lets us overload obj with gameID or actual object 
+        //should use this formula everywhere ???
+        var _obj = (typeof(obj)=="string" ? getObjectByGameID(obj) : obj);
+        if (_obj.states.length>0) {return (_obj.states.indexOf(objectState)>-1);}
+        else {return false;}
+    };
+
+    var isObjectTransferrable = function (obj) {
+        var _obj = (typeof(obj)=="string" ? getObjectByGameID(obj) : obj);
+        return checkObjectState (_obj,eObjectStates.Transferrable);
+    };
+
+    var getDoorAt = function (dir) {
+        var roomItems = oPlayer.location.items;
+        for (var i in roomItems) {
+            if (roomItems[i].type==eThingTypes.Door) {
+                if (roomItems[i].direction == dir) return roomItems[i];
+            }
+        }  
+        return null;
+    };
+
+    var movePlayer = function (cmd) {
+        var verb = cmd.verb.toLowerCase();
+        var dir;
+        var door;
+        if (verb=="n" || verb=="north") {
+            dir = eDirections.North;
+        } else if (verb=="s" || verb=="south") {
+            dir = eDirections.South; 
+        } else if (verb=="e" || verb=="east") {
+            dir = eDirections.East;
+        } else if (verb=="w" || verb=="west") {
+            dir = eDirections.West;
+        } else if (verb=="nw" || verb=="northwest") {
+            dir = eDirections.NorthWest;
+        } else if (verb=="sw" || verb=="southwest") {
+            dir = eDirections.SouthWest; 
+        } else if (verb=="ne" || verb=="northeast") {
+            dir = eDirections.NorthEast;
+        } else if (verb=="se" || verb=="southeast") {
+            dir = eDirections.SouthEast; 
+        } else { dir = null; }
+        door = getDoorAt(dir);
+
+        if (door) {
+
+            if (isObjectOpen(door)) {
+                oPlayer.location = getObjectByGameID(door.destination);
+                oIO.refreshScreen(oPlayer, oPlayer.location);
+                return true;
+            } else {
+                oIO.echo("You can't! The way is obstructed!  Maybe you can 'open' something?");
+                return false;
+            }
+
+        } else {
+            oIO.echo("Not possible to go this way!");
+            return false;
+        }
+
+    };
+
+    var getFromInventory = function (objBase, objRefByNoun) {
+        var obj;
+        for (var i in objBase.items)
+        {
+            obj = objBase.items[i];
+            if (obj.basicNoun == objRefByNoun) {
+                if (objBase.states.indexOf(eObjectStates.Locked)>-1 || objBase.states.indexOf(eObjectStates.Locked)>-1) {
+                    oIO.echo("You have it, but it's shut up inside a " + objBase.basicNoun +".");
+                    return null;
+                } else {
+                    return obj;
+                }
+
+            }
+            if (obj.items.length>0) {return getFromInventory(obj,objRefByNoun);}
+        }
+        oIO.echo("You don't have a " + objRefByNoun +".");
+        return null;
+    };
+
+    var Drop = function (cmd){
+        var noun =  cmd.directObjects[0];
+        var obj  =  getFromInventory (noun);
+        if (typeof(obj)=="number") {
+            var exception = obj;
+            switch(exception) {
+                case eCommandExceptions.DuplicateObjectFound:
+                    oIO.echo("Drop which " + noun + "?");
+                    break;
+
+                case eCommandExceptions.NoSuchObjectFound:
+                    if (!playerHas(noun)) {
+                        oIO.echo ("You don't have one of those!");
+                    };
+                    break;
+
+                case eCommandExceptions.ObjectNotHere:
+                    oIO.echo("Can't seem to find a " + noun + " here.");
+                    break;
+
+                default:
+                    break;
+            }
+        } else  {
+            var gameID = obj.gameID;
+            if (isObjectTransferrable (gameID)) {
+                transferObject (gameID, oPlayer, oPlayer.location);
+                oIO.echo(obj.basicNoun + " dropped.");
+                return true;
+            } else {
+                oIO.echo("Can't drop that!");
+                return false;
+            }
+        }
+
+    };
+
+    var Take = function (cmd){
+        var noun =  cmd.directObjects[0];
+        var objectToTake = getRoomObjectByNoun (oPlayer.location, noun);
+        if (typeof(objectToTake)=="number") {
+            var exception = objectToTake;
+            switch(exception) {
+                case eCommandExceptions.DuplicateObjectFound:
+                    oIO.echo("Take which " + noun + "?");
+                    break;
+
+                case eCommandExceptions.NoSuchObjectFound:
+                    if (playerHas(noun)) {
+                        oIO.echo ("You already seem to have one of those!");
+                    }
+                    else {
+                        oIO.echo("No such thing exists (in this world!)");
+                    }
+                    break;
+
+                case eCommandExceptions.ObjectNotHere:
+                    oIO.echo("Can't seem to find a " + noun + " here.");
+                    break;
+
+                default:
+                    break;
+            }
+        } else  {
+            var gameID = objectToTake.gameID;
+            if (isObjectTransferrable (gameID)) {
+                transferObject (gameID, oPlayer.location, oPlayer);
+                oIO.echo(objectToTake.basicNoun + " taken.");
+                return true;
+            } else {
+                oIO.echo("Can't take that!");
+                return false;
+            }
+        }
+    };
+
+
+
+    var showPlayerInventory = function (obj){
+        if (obj.length>0) {
+            for (var i in obj) {
+                oIO.echo("-->a " + getAdjective(obj[i]) + " " + obj[i].basicNoun);
+                if (obj[i].items.length>0 && !obj[i].states.indexOf(eObjectStates.Closed)) showPlayerInventory(obj[i].items);
+            }
+        } else {
+            oIO.echo ("&nbsp; &nbsp; Nothing but your imagination!")
+        }
+    };
+
+    var getAdjective = function (obj) {
+        return (obj.adjectives.length>0?obj.adjectives[0]:"");
+    };
+
+
+    var isSimpleCommand = function (commandObject) {
+        return (commandObject.pattern == "V");
+    };
+
+
+    //Will be the biggest function in the Game Module
+    //since this carries the logic of this particular story
+
+    var runCommand = function (command) {
+        // Player action occurs in a location context.
+        // So we will examine player's actions in that light.
+        var cmd = command;
+         switch (cmd.verb) {
+
+                case "grue":
+                    opacityIncDec = -.10;
+                    break;
+
+                case "unlock":
+                    if (isSimpleCommand(cmd)) {
+                        oParser.getDirectObjectQualifier(cmd);
+                    }
+                    else {
+                        Unlock(cmd);
+                        return true;
+                    }
+                    break;
+
+                case "look":
+                    if (isSimpleCommand(cmd)) { 
+                        getDescriptionOf(); return true; 
+                    }
+                    else {
+                        getSpecificDescription(cmd);
+                    }
+                    break;
+
+                case "inventory":
+                    oIO.echo ("You are carrying:");
+                    showPlayerInventory(oPlayer.items);
+                    break;
+
+                case "open":
+                    if (isSimpleCommand(cmd)) {
+                        oParser.getDirectObjectQualifier(cmd);
+                    }
+                    else {
+                        Open(cmd);
+                        return true;
+                    }
+                    break;
+
+                case "close":
+                    if (isSimpleCommand(cmd)) {
+                        oParser.getDirectObjectQualifier(cmd);
+                    }
+                    else {
+                        Close(cmd);
+                        return true;
+                    }
+                    break;
+
+                case "take":
+                    if (isSimpleCommand(cmd)) {
+                        oParser.getDirectObjectQualifier(cmd);
+                    }
+                    else {
+                        Take(cmd);
+                    }
+                    break;
+
+                case "drop":
+                //     if (isSimpleCommand(cmd)) {
+                //         oParser.getDirectObjectQualifier(cmd);
+                //     }
+                //     else {
+                //         Drop(cmd);
+                //     }
+                    break;
+
+
+                case "south":
+                    movePlayer(cmd);
+                    break;
+
+                case "north":
+                    movePlayer(cmd);
+                    break;
+
+                case "east":
+                    movePlayer(cmd);
+                    break;
+
+                case "west":
+                    movePlayer(cmd);
+                    break;
+
+                case "northwest":
+                    movePlayer(cmd);
+                    break;
+
+                case "northeast":
+                    movePlayer(cmd);
+                    break;
+
+                case "southwest":
+                    movePlayer(cmd);
+                    break;
+
+                case "southeast":
+                    movePlayer(cmd);
+                    break;
+
+                default:
+                    break;
+            }
+
+        if (isGameOver()){
+            return false;
+        }
+        else {
+            return true;
+        }
+    };
+
+    var getDescriptionIn = function (object) {
+        var item;
+        var items;
+        if (object.states.indexOf(eObjectStates.Closed)>-1) {
+            oIO.echo ("Hmmm, you can't see into the " + object.basicNoun + " because it is closed!");
+        } else {
+            oIO.echo ("Inside the " + object.basicNoun + " you spy the following: ");
+            items = object.items;
+            if (items.length==0) {
+                oIO.echo ("nothing.");
+            } else {
+                for (item in items) {
+                    oIO.echo("-->" + items[item].description + appendStateDescriptions(items[item]), true);
+                }
+            }
+        }
+    };
+
+    var getDescriptionOf = function (object) {
+        var item;
+        var roomItems;
+        try {
+            //general description
+            if (!object) {
+                oIO.writeText(oPlayer.location.description, true);
+                roomItems = oPlayer.location.items;
+                for (item in roomItems) {
+                    oIO.writeText(roomItems[item].description + appendStateDescriptions(roomItems[item]), true);
+                }
+            } else {
+            //specific object description
+                var desc = "You see a ";
+                var adjCount= 0;
+                for (var i in object.adjectives) {
+                    if (adjCount>0) {desc+=", "; adjCount=0;} 
+                    desc += object.adjectives[i];
+                    adjCount ++;
+                }
+                var extraSpace = (object.adjectives);
+                if (extraSpace) desc +=" ";
+                desc += object.basicNoun + ".";
+                oIO.echo (desc);
+
+            }
+
+        } catch (e) { alert(e); }
+    };
+
+    var appendStateDescriptions = function(obj){
+        var stateDescriptions = "";
+        var appendCount = 0;
+        if (obj.states.length>0) {
+            stateDescriptions+= " &nbsp; &nbsp; The " + obj.basicNoun + " is ";
+        }
+        var states = obj.states;
+        for (var i in states) {
+
+            if (appendCount>0) {
+                stateDescriptions += " and ";
+                appendCount = 0;
+            } 
+
+            switch (states[i]){
+                case eObjectStates.Transferrable:
+                    break;
+
+                case eObjectStates.None:
+                    break;
+
+                default:
+                    stateDescriptions += getEnumKey(eObjectStates, states[i]).toString().toLowerCase();
+                    appendCount ++;
+                    break;
+            }
+
+
+        }
+
+        stateDescriptions = (appendCount>0?stateDescriptions += ".":"");
+        return stateDescriptions;
+    };
+
+    var isGameOver = function () {
+        try {
+            var playerDead = (oPlayer.states.indexOf(ePlayerStates.Dead) > -1);
+            var playerWon = (oPlayer.score == maxScore);
+        }
+        catch (e) { alert(e); }
+        return (playerDead || playerWon);
+    };
+
+
+    var gruePhase = function (x, min, max) {
+        this.inc = x;
+        this.min = min;
+        this.max = max;
+        this.checkOpacity = function (img) {
+            var newVal = 0.000;
+            newVal = eval(eval(window.getComputedStyle(img,null).getPropertyValue("opacity")).toFixed(3)) + this.inc;
+            if (this.inc>0) {
+                if (newVal > this.max) return false;
+            } 
+            else {
+                if (newVal < this.min) return false;
+            }
+            img.style.setProperty("opacity", newVal + "");
+            return true;
+
+        };
+    };
+
+// Cool Grue Effect for AMBIENCE BABY!!!!
+
+    var lamps = [];
+    var gruePhases = [];
+    var gruePhaseIndex = 0;
+    var currentGruePhase;
+    var grueFXWait = 0;
+    var grueInterval = 0;
+    var baseOpacity  = .20;
+
+
+    var checkRoomAmbience = function () {
+        var amb = oPlayer.location.ambience;
+         switch (amb.frequency) {
+             case eAmbienceFrequency.Once:
+                  if (amb.soundState==eAmbienceStates.Waiting) {
+                         amb.soundState = eAmbienceStates.Playing;
+                         amb.audioObject.src = amb.soundFile;
+                         amb.audioObject.loop = "loop";
+                         amb.audioObject.play();
+                         clearInterval("roomAmbienceInterval"); 
+                         amb.audioObject.setAttribute("loop","off");
+                         amb.soundState = eAmbienceStates.Done;
+                     }
+            break;
+
+            default:
+            break;
+        }
+
+
+    };
+
+    var doLampFlicker = function () {
+        imgNames = ["images/Lamp_Ray.bmp", "images/Lamp_Ray2.bmp", "images/Lamp_Ray3.bmp"];
+        var lamp = document.getElementById("lamp");
+        var flicker = Math.floor(Math.random()*imgNames.length);
+        lamp.src = imgNames[flicker]; 
+    };
+
+    var changeGrueOpacity = function () {
+    var img = document.getElementById("gameTitle");
+    var audio = document.getElementById("audioHeartbeat");
+        try {
+            doLampFlicker();
+            if (grueInterval>=grueFXWait) {
+                if (!currentGruePhase.checkOpacity(img)) {
+                    //alert (gruePhaseIndex);
+                    audio.volume =0.8;
+                    audio.play();
+                    gruePhaseIndex = (gruePhaseIndex==gruePhases.length-1?0:gruePhaseIndex+1);
+                    if (gruePhaseIndex==0) {
+                        audio.pause();
+                        grueInterval = 0;
+                        //grueFXWait = Math.floor(Math.random()*1000+1);
+                    }
+                    currentGruePhase = gruePhases[gruePhaseIndex];
+                }
+            }  else {
+                grueInterval++;
+                } 
+
+        } catch(e) {
+            alert(e);}
+    };
+
+    var runAmbience = function () {
+
+            //WIND
+            var audio =document.getElementById("windyGraveyard");
+            audio.volume = 0.2;
+
+            // AMBIENCE FX //
+            grueFXWait = 200;
+            gruePhases.push(new gruePhase(.15,baseOpacity,.60),new gruePhase(-.05,.30,.60),new gruePhase(.40,.30,.99),new gruePhase(-.012,baseOpacity,.99));
+            currentGruePhase = gruePhases[gruePhaseIndex];
+            screenFX = setInterval(changeGrueOpacity, 55);
+            //roomAmbienceInterval = setInterval(checkRoomAmbience, 100);
+
+            audio.play();
+    };
+
+
+    var initGame = function () {
+        try {
+
+            document.getElementById("gameTitle").style.setProperty("opacity", baseOpacity + "")
+
+            oDictionary = new dictionary();
+            oIO = new IO();
+            oParser = new parser();
+            createDictionary();
+            createMap();
+            createGameObjects();
+            runAmbience();
+            watchKeyboard = setInterval(submitPlayerCommandToParser, 10);
+            oIO.refreshScreen(oPlayer, oPlayer.location); 
+        } 
+            catch(e) {
+                alert (e);
+        }
+        var o = new ObjectDaemon ("key",oPlayer.location);
+    };
+
+</script>
+</html>
+
+

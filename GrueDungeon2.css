@@ -1,0 +1,167 @@
+﻿body {
+    font-family:Verdana;
+    color:White;
+    font-size:10pt;
+    background-color:black;
+
+}
+
+#sword {
+    position: relative;
+    top: -80px;
+    margin-left: 22%;
+    z-index: -5;
+    opacity: .55;
+}
+
+#gameTitle {
+    position: relative;
+    top: 40px;
+    margin-left: 14%;
+    z-index: 3;
+    opacity: .5;
+}
+
+#grueeyes {
+
+    position:relative;
+    top: 150px;
+    margin: auto;
+    z-index: -1;    
+    opacity: .00;
+    transform:rotate(-15deg);
+    -ms-transform:rotate(-15deg); /* IE 9 */
+    -moz-transform:rotate(-15deg); /* Firefox */
+    -webkit-transform:rotate(-15deg); /* Safari and Chrome */
+    -o-transform:rotate(-15deg); /* Opera */
+}
+
+#lamp {
+    position:relative;
+    opacity: 1;
+    bottom: 200px;
+    float:right;
+    right: 70px;
+    z-index: -1;    
+    transform:rotate(5deg);
+    -ms-transform:rotate(5deg); /* IE 9 */
+    -moz-transform:rotate(5deg); /* Firefox */
+    -webkit-transform:rotate(5deg); /* Safari and Chrome */
+    -o-transform:rotate(5deg); /* Opera */
+
+}
+
+#background {
+    height: 700px;
+    width: 1280px;
+    margin: auto;
+    }
+
+#storyPanel
+{
+    position:relative;
+    margin:auto;
+    top:-80px;
+    width:1000px;
+    height:700px;
+    display:block;
+    background-color:transparent;
+
+}
+
+#commandDiv
+{
+    position:absolute;
+    vertical-align:bottom;
+    bottom:10px;
+    margin-left:10px; 
+    font-size:16pt;  
+    font-family: arial; 
+}
+
+#commandDiv input
+{
+    width:970px;
+    background-color: transparent;
+    outline: none;
+    border: none;
+    color: white;
+    font-size:14pt;
+    font-family:Verdana;
+    bottom:0px;
+}
+
+#header
+{
+    position:relative;
+    background-color:black;
+    width: 965px;
+    height: 20px;
+    margin-top: 10px;
+    margin-left: 10px;
+    margin-right: 10px;
+    padding: 5px;
+    display:inline-block;
+    color:White;
+    font-family:Arial;
+    font-weight: bold;
+    font-size: 14pt;
+    border: 1px solid black ;
+}
+    
+
+#roomTitleDiv
+{
+    position:inherit;
+    background-color: black ;
+    text-align: center;
+    float:left;
+    vertical-align:bottom;
+    width:90%;
+}
+
+#scoreDiv 
+{   position:relative;
+    background-color: black;
+    width:10%;
+    text-align: center;
+    float:right;
+    right:0px;
+
+}
+
+#fontBitmap {
+    background-image: url("font.png");
+    width:564px;
+    height:21px;
+}
+
+#descriptionDiv
+{
+    position:absolute;
+    background-color:transparent;
+    font-family:inherit;
+    font-size:16pt;
+    color:white;
+    border:none;
+    width: 970px;
+    padding-left:10px;
+    padding-right:10px;
+    /* word-wrap: break-word; */
+    margin-top:30px;
+    margin-left: 10px;
+    vertical-align:bottom;
+    bottom:50px;
+    height: 600px;
+    overflow: hidden;
+    overflow-x:hidden;
+    line-height: (2*height - font-size);
+    text-align: left;
+    float: right;
+}
+
+#skeletonPointer {
+    position:absolute;
+    bottom:-20px;
+    margin-left: -210px;
+}
